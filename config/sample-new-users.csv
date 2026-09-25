@@ -1,0 +1,3 @@
+FirstName,LastName,SamAccountName,OU
+Alex,Martinez,amartinez,"OU=Contractors,DC=corp,DC=local"
+Jordan,Lee,jlee2,"OU=Contractors,DC=corp,DC=local"

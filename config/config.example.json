@@ -1,0 +1,13 @@
+{
+  "_comment": "Non-secret config template. Copy to config.local.json (gitignored) and fill in environment-specific values -- never commit real hostnames, credentials, or thresholds tied to a real environment here.",
+  "diskSpaceAlert": {
+    "warningThresholdPercent": 15,
+    "volumes": ["C:"]
+  },
+  "passwordExpiry": {
+    "warningWindowDays": 14
+  },
+  "logRotation": {
+    "retentionDays": 30
+  }
+}
