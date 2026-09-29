@@ -14,6 +14,30 @@ skimmable layer -- for the reasoning behind any of these, see
 - Built `bash/lib/logging.sh` (`write_log`), matching
   `Logging.psm1`'s shape so logs read the same across both languages.
 
+## 2026-09-29 (cont'd)
+
+- Built `rotate-logs.sh`: size-based trigger, copytruncate rotation,
+  gzip compression, retention pruning, `--dry-run` support. First
+  script tested by direct execution before ever reaching a real
+  machine -- caught and fixed two real bugs this way: empty files being
+  rotated forever under a low threshold, and retention pruning silently
+  never running on days without a fresh rotation.
+
+## 2026-09-29 (cont'd 2)
+
+- Extracted `bash/lib/config.sh` (`load_toolkit_config`) and refactored
+  `rotate-logs.sh` to use it, once `backup.sh` needed the identical
+  config-loading logic. Regression-tested `rotate-logs.sh` afterward --
+  no breakage.
+- Built `backup.sh`: tar+gzip archival with relative (not absolute)
+  paths, verification via an independent `tar -tzf` read-back rather
+  than trusting the write's exit code, retention pruning, `--dry-run`.
+  Fully verified locally -- creation, verification, corruption
+  detection, and retention all tested clean, no bugs found.
+- **All 5 scripts from the original project card now exist**: AD user
+  creation, password expiry reporting, disk space alert, log rotation,
+  and backup.
+
 ## 2026-09-28
 
 - Found and fixed a real bug in `Test-DiskSpaceAlert.ps1`'s cooldown

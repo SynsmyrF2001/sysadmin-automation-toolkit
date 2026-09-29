@@ -7,6 +7,7 @@ Source: project tracker card -- Priority 3, "Build next."
 - [x] Shared logging convention -- PowerShell (`powershell/modules/Logging.psm1`)
 - [x] Shared config-loading convention -- PowerShell (`powershell/modules/Config.psm1`)
 - [x] Shared logging convention -- Bash (`bash/lib/logging.sh`)
+- [x] Shared config-loading convention -- Bash (`bash/lib/config.sh`)
 - [ ] Config/secrets handling pattern (partially in place via
       `config/config.example.json`; needs a real `.local.json` convention
       documented once more scripts use it)
@@ -27,5 +28,9 @@ Source: project tracker card -- Priority 3, "Build next."
 
 ## Bash
 
-- [ ] `rotate-logs.sh` -- log rotation
-- [ ] `backup.sh` -- backup script
+- [x] `rotate-logs.sh` -- built and locally verified (rotation,
+      empty-file skip, retention pruning, dry-run all tested against a
+      real harness); pending a first run against TOOLKIT01
+- [x] `backup.sh` -- built and fully verified locally (creation,
+      verification/corruption detection, retention, dry-run); pending
+      a first run against TOOLKIT01

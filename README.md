@@ -132,11 +132,39 @@ git push -u origin main
       idempotency confirmed on a second identical run, cross-validated
       against `Get-PasswordExpiryReport.ps1` (6 -> 8 flagged accounts,
       exactly as predicted)
-- [x] `Test-DiskSpaceAlert.ps1` built and verified against the lab:
-      per-volume cooldown state (`state/disk-space-alert-state.json`),
+- [x] `Test-DiskSpaceAlert.ps1` built and fully verified against the
+      lab: per-volume cooldown state (`state/disk-space-alert-state.json`),
       threshold check overridable for testing without filling a disk,
       no distribution channel wired up yet (console + log only, by
-      design).
+      design)
+- [x] `TOOLKIT01` built: Ubuntu 26.04.1 LTS (arm64), VMware Fusion,
+      SSH-reachable from the Mac -- the real target for the Bash half
+      of the toolkit, deliberately not domain-joined (see
+      docs/DECISIONS.md for why this is separate from the still-unbuilt
+      hybrid-identity LNX01 project)
+- [x] Shared Bash logging module built (`bash/lib/logging.sh`,
+      `write_log`), matching `Logging.psm1`'s shape so logs read the
+      same across both languages
+- [x] `rotate-logs.sh` built and locally verified: copytruncate
+      rotation (not rename, so a process with the file already open
+      keeps writing correctly), gzip compression, retention pruning,
+      `--dry-run`. Two real bugs caught by directly executing the
+      script before it ever reached a real machine -- a path the
+      PowerShell scripts never had, since there's no PowerShell runtime
+      available to run those against
+- [x] Shared Bash config-loading module (`bash/lib/config.sh`)
+      extracted once `backup.sh` needed the same logic
+      `rotate-logs.sh` already had inline; `rotate-logs.sh` refactored
+      and regression-tested afterward
+- [x] `backup.sh` built and fully verified locally: tar+gzip with
+      relative paths (not absolute, so restores don't fight you),
+      verification via an independent read-back rather than trusting
+      the write's exit code, retention pruning, `--dry-run`. No bugs
+      found -- the first script in either language to work correctly
+      on the first implementation
+- [x] **All 5 scripts from the original project card now exist**: AD
+      user creation, password expiry reporting, disk space alert, log
+      rotation, and backup
 - [x] Shared config-loading module extracted (`Config.psm1`) once a
       second script needed the same local-vs-example fallback logic
 - [x] Cryptographically secure temporary-password generation
@@ -163,9 +191,9 @@ git push -u origin main
 - [ ] Resolve blank `DisplayName` on `jsmith`/`mgarcia`/`edavis`
       (existing lab accounts, predates this toolkit) -- diagnostic
       query given, results pending
-- [ ] `Test-DiskSpaceAlert.ps1` -- not yet built
-- [ ] Pester tests for the filtering/computation logic -- deferred
-- [ ] `rotate-logs.sh`, `backup.sh`, and the shared `lib/logging.sh` --
-      not yet built
+- [ ] Pester tests (PowerShell) and bats tests (Bash) -- deferred a few
+      times now, next on the list
+- [ ] CI (GitHub Actions) running tests on push -- once there are tests
+      to run
 
 See `docs/ROADMAP.md` for the full task-level breakdown.

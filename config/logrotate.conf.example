@@ -1,0 +1,13 @@
+# Sourced directly by rotate-logs.sh via `source` -- plain KEY=VALUE,
+# no JSON parser (jq) dependency required. Copy to logrotate.conf.local
+# (gitignored) to override for your environment.
+
+# The single log file this script rotates. v1 scope is one file, not a
+# whole directory of many -- see docs/DECISIONS.md.
+LOG_TARGET_FILE="/var/log/toolkit-demo/app.log"
+
+# Rotate when the target file's size reaches or exceeds this many MB.
+MAX_SIZE_MB=10
+
+# Delete rotated (.gz) archives older than this many days.
+RETENTION_DAYS=30

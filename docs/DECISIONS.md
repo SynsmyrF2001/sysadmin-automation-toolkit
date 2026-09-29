@@ -332,7 +332,11 @@ This is a one-time data remediation for pre-existing accounts, not a
 toolkit script -- not added to `powershell/`, since there's no recurring
 need for it once applied.
 
-**Status:** Fix identified, not yet applied.
+**Status:** Fix identified, not applied. Explicitly deprioritized
+2026-09-29 in favor of finishing `backup.sh` and the test harness --
+not abandoned because the fix is wrong, just not worth further time
+right now. The one-liner above is still valid whenever it's picked back
+up.
 
 
 ## 2026-09-25 -- Test-DiskSpaceAlert.ps1: state, cooldown, and shared config
@@ -481,3 +485,104 @@ wrong silently:**
   in the file's usage comment to compensate.
 
 **Status:** Accepted.
+
+
+## 2026-09-29 -- rotate-logs.sh: two real bugs caught by actually running it
+
+**Context:** First Bash script with real logic. Unlike every PowerShell
+script in this repo, Bash can be executed directly in the sandbox this
+gets built in -- so for the first time, testing happened *before*
+anything was ever handed over, not only after.
+
+**Design decisions:**
+- **Copytruncate, not rename-then-recreate**, for the rotation
+  mechanism -- a file descriptor points to an inode, not a path name,
+  so renaming a log out from under a process that still has it open
+  doesn't stop that process writing into the renamed file. Truncating
+  the original in place keeps existing file descriptors valid.
+- **Bash-native `KEY=VALUE` config** (`logrotate.conf.example` /
+  `.local`), not JSON -- Bash has no built-in JSON parser, and pulling
+  in `jq` as a dependency for a simple toolkit script isn't worth it.
+  Different format from the PowerShell side's `config.example.json` on
+  purpose: same override pattern, native idiom per language.
+- **v1 scope is one target file, not a directory of many** -- keeps the
+  first version simple; looping over multiple files is a natural
+  extension if it's ever needed.
+
+**Bug 1 -- empty files rotated forever.** The threshold check
+(`size_bytes -lt max_bytes`) is correct in general, but with a test
+override of `MAX_SIZE_MB=0` (the same "crank the threshold" trick used
+for the PowerShell scripts), a freshly-truncated 0-byte file still
+counted as "at or above threshold" on the very next run, rotating an
+empty file into a useless empty archive, forever. **Fix:** an explicit
+`size_bytes -eq 0` check that skips rotation regardless of threshold --
+an empty file is never worth rotating, no matter how the config is set.
+
+**Bug 2 -- retention pruning silently never ran on most days.** Every
+"nothing to rotate" path (`exit 0`) sat *above* the pruning step in the
+script, so pruning only ever executed on runs where a fresh rotation
+also happened. On a real cron schedule, that means old archives would
+almost never get cleaned up -- the exact opposite of what retention is
+for. **Fix:** restructured so the rotation checks use if/else and fall
+through, rather than exiting; pruning now runs unconditionally at the
+end of every invocation, independent of what happened above it. Both
+bugs were caught and fixed via direct execution against a real test
+harness (an actual file, actual `gzip`, actual backdated mtimes via
+`touch -d`) before this file was ever transferred to TOOLKIT01.
+
+**A third apparent bug that wasn't one:** an early attempt to verify
+pruning showed 0 files pruned when 1 was expected. Root cause was in
+the *test harness*, not the script -- `touch -d "40 days ago" file`
+followed immediately by `echo "old" > file` overwrites the file again,
+which resets its mtime back to now. Fixed the test by writing content
+first and backdating last. Worth recording because it's the same
+"which side actually has the bug" discipline this whole project has
+run on -- don't assume the newer, less-trusted code is at fault just
+because something didn't work.
+
+**Status:** Built and locally verified (rotation, empty-file skip,
+retention pruning, and dry-run mode all tested against a real harness).
+Pending a first real run against TOOLKIT01 itself.
+
+
+## 2026-09-29 -- Shared Bash config module; backup.sh built and verified clean
+
+**Context:** `backup.sh` needed the identical local-then-example config
+pattern `rotate-logs.sh` already had inline -- the same threshold that
+triggered extracting `Config.psm1` on the PowerShell side.
+
+**Decision:** Extracted `bash/lib/config.sh` (`load_toolkit_config`),
+refactored `rotate-logs.sh` to use it, re-ran its full regression suite
+to confirm nothing broke (it didn't).
+
+**backup.sh design decisions:**
+- **Local destination only, one directory, archived whole (v1 scope).**
+  Remote destinations (rsync/scp to a second host) are a natural
+  extension, not built because there's no second machine in this lab
+  to receive them yet -- same "don't build the distribution channel
+  before you can test it" reasoning as the disk-alert script's deferred
+  notification channel.
+- **`tar -C <parent> <leaf>`, not an absolute path**, so the archive
+  contains relative paths. An archive full of absolute paths fights you
+  on restore -- extraction tries to write back to those exact original
+  locations instead of wherever you actually want it that time.
+- **Verification is a separate read-back pass** (`tar -tzf`), not trust
+  in `tar -czf`'s own exit code. Confirmed this actually matters: a
+  truncated archive (simulating an interrupted write) makes `tar -tzf`
+  exit non-zero, which `pipefail` (in the `set -euo pipefail` header)
+  correctly propagates through the `| wc -l` pipeline rather than
+  hiding it behind `wc`'s own successful exit.
+
+**Status:** Built and fully verified against a local test harness --
+creation, verification, corruption detection, retention pruning, and
+dry-run all tested clean, no bugs found. This is the first script in
+either language that worked correctly on the first implementation,
+plausibly because `rotate-logs.sh`'s "run maintenance unconditionally,
+not behind an early exit" lesson got designed in from the start here
+rather than discovered after the fact. Pending a first real run against
+TOOLKIT01.
+
+**Milestone:** all 5 scripts from the original project card now exist:
+AD user creation, password expiry reporting, disk space alert, log
+rotation, and backup -- the first four fully verified against real
+environments, this one verified locally and awaiting the same.

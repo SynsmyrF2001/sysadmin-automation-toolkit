@@ -1,0 +1,12 @@
+# Sourced via the shared load_toolkit_config helper -- plain KEY=VALUE,
+# same convention as logrotate.conf.example. Copy to backup.conf.local
+# (gitignored) to override for your environment.
+
+# Directory to back up. v1 scope is one directory, archived whole.
+BACKUP_SOURCE_DIR="/etc/toolkit-demo"
+
+# Directory the timestamped .tar.gz archives are written to.
+BACKUP_DEST_DIR="/var/backups/toolkit-demo"
+
+# Delete backup archives older than this many days.
+RETENTION_DAYS=30
