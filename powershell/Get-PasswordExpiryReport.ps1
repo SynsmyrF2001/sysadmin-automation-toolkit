@@ -77,7 +77,9 @@ param(
 # working directory -- using it means the script finds its module and
 # config no matter where it was launched from (interactive shell,
 # scheduled task, another script).
+$RepoRoot = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot "modules\Logging.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "modules\Config.psm1") -Force
 
 $LogDir = Join-Path $PSScriptRoot "..\logs"
 if (-not (Test-Path $LogDir)) {
@@ -92,17 +94,8 @@ Write-Log -LogPath $LogPath -Level INFO -Message "Starting password expiry repor
 # ---------------------------------------------------------------------------
 
 if (-not $WarningDays) {
-    $ConfigPath = Join-Path $PSScriptRoot "..\config\config.local.json"
-    if (-not (Test-Path $ConfigPath)) {
-        $ConfigPath = Join-Path $PSScriptRoot "..\config\config.example.json"
-    }
-    try {
-        $Config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-        $WarningDays = $Config.passwordExpiry.warningWindowDays
-    }
-    catch {
-        Write-Log -LogPath $LogPath -Level WARN -Message "Could not read config at $ConfigPath -- defaulting WarningDays to 14"
-    }
+    $Config = Get-ToolkitConfig -RepoRoot $RepoRoot
+    $WarningDays = $Config.passwordExpiry.warningWindowDays
     if (-not $WarningDays) { $WarningDays = 14 }
 }
 

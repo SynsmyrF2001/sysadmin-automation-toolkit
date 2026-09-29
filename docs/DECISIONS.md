@@ -231,9 +231,11 @@ bug):**
   script defect.
 - Live data shows `sjohnson` as `Enabled = True`, though
   `homelab-ad-ds`'s README lists it as an intentionally disabled fixture
-  alongside `kpark`. Only `kpark` is actually disabled right now --
-  worth reconciling over there; unrelated to this repo, noted here only
-  because it's how it surfaced.
+  alongside `kpark`. Only `kpark` is actually disabled right now.
+  **Decision (2026-09-25): leave both as they are.** Not touching
+  `sjohnson`'s state and not editing `homelab-ad-ds`'s docs to match --
+  the drift is known, doesn't block anything in this repo, and is noted
+  here rather than "resolved" for its own sake.
 
 **Lesson:** this bug shipped in the same commit as the fix for a
 different coercion bug (the array-unwrapping one), in code that was
@@ -283,6 +285,199 @@ the read-only report.
    DisplayName when `Get-PasswordExpiryReport.ps1` was tested against
    the lab. Explicit here so this script doesn't produce the same gap.
 
-**Status:** Accepted, pending validation against the lab (`-WhatIf`
-first, per the sample CSV at `config/sample-new-users.csv`, targeting
-the real `Contractors` OU).
+**Status:** Fully verified against the lab, 2026-09-25 19:42 --
+`-WhatIf` correctly showed both target operations with nothing created;
+the real run created `amartinez` and `jlee2` cleanly; a second identical
+run correctly skipped both (`0 created, 2 skipped, 0 failed`), confirming
+idempotency rather than just asserting it in a comment.
+
+Bonus cross-validation: `Get-PasswordExpiryReport.ps1`, re-run after
+creation, went from 6 to 8 accounts flagged `MustChangeAtLogon` --
+`amartinez` and `jlee2` picked up exactly as expected, since
+`ChangePasswordAtLogon = $true` at creation sets `pwdLastSet = 0` under
+the hood. Two independently-built scripts agreeing about the same AD
+state. Also visible in that same output: `amartinez`/`jlee2` show real
+`DisplayName` values next to `jsmith`/`edavis`/`mgarcia`, which are
+still blank -- direct evidence the explicit `-DisplayName` decision
+above actually closes the gap it was meant to close.
+
+
+## 2026-09-25 -- DisplayName gap on jsmith/mgarcia/edavis: root cause confirmed
+
+**Context:** `Get-PasswordExpiryReport.ps1` showed blank `DisplayName`
+for `jsmith`, `mgarcia`, `edavis` when first tested against the lab.
+Diagnosed rather than assumed: queried `GivenName`/`Surname`/`DisplayName`
+directly.
+
+**Finding:** `GivenName`/`Surname` are correctly populated (John Smith,
+Maria Garcia, Emily Davis) -- only `DisplayName` is empty. Confirms the
+theory from `New-BulkUsersFromCsv.ps1`'s design: these accounts were
+almost certainly created via `New-ADUser` with `-GivenName`/`-Surname`
+set but no explicit `-DisplayName`, which `New-ADUser` does not derive
+automatically.
+
+**Decision:** Fix by deriving `DisplayName` from each account's own
+existing `GivenName`/`Surname` (not hardcoded literal names) -- single
+source of truth, no risk of a typo introducing new bad data while fixing
+old bad data:
+
+```
+'jsmith','mgarcia','edavis' | ForEach-Object {
+    $User = Get-ADUser -Identity $_ -Properties GivenName,Surname
+    Set-ADUser -Identity $_ -DisplayName "$($User.GivenName) $($User.Surname)"
+}
+```
+
+This is a one-time data remediation for pre-existing accounts, not a
+toolkit script -- not added to `powershell/`, since there's no recurring
+need for it once applied.
+
+**Status:** Fix identified, not yet applied.
+
+
+## 2026-09-25 -- Test-DiskSpaceAlert.ps1: state, cooldown, and shared config
+
+**Context:** First script with no AD involvement at all -- local system
+monitoring, meant to run repeatedly on a schedule (e.g. every 15
+minutes via Task Scheduler). That repetition introduces a problem
+neither prior script had: without memory between runs, a volume stuck
+below threshold would re-alert every single run, forever, for the same
+unresolved problem.
+
+**Decisions:**
+
+1. **A small local JSON state file** (`state/disk-space-alert-state.json`,
+   new top-level `state/` directory -- distinct from `config/`, which is
+   user-set, and `logs/`, which is an audit trail) tracks each volume's
+   last-alert timestamp. Below threshold + within the configured
+   cooldown window = suppress; the alert already fired recently for the
+   same problem.
+
+2. **Cooldown state clears once a volume recovers above threshold**,
+   rather than just expiring on a timer. Without this, a volume that
+   dips, alerts, recovers, and dips again shortly after would stay
+   suppressed by the old timestamp -- silencing a genuinely new
+   occurrence of the problem because an old one happened to be recent.
+
+3. **No distribution channel (email/webhook) for v1** -- alerts are a
+   loud console line plus an ERROR-level log entry. Same reasoning as
+   deferring email on `Get-PasswordExpiryReport.ps1`: the detection and
+   cooldown logic is the part worth getting right first and is fully
+   testable without one. `-Volumes`/`-WarningThresholdPercent` are
+   plumbed as parameters specifically so a channel can be added later
+   without restructuring anything.
+
+4. **No `-WhatIf` / `SupportsShouldProcess`.** Unlike the AD scripts,
+   this one only ever mutates its own local state and log files, not a
+   shared system of record -- there's nothing for a dry run to
+   meaningfully preview.
+
+5. **`-WarningThresholdPercent` as an overridable parameter, not just a
+   config value** -- same reason `Get-PasswordExpiryReport.ps1` supports
+   `-WarningDays 9999`: DC01's disk isn't actually low on space, so
+   there's no way to observe the alert path with real data. Setting the
+   threshold artificially high (e.g. `-WarningThresholdPercent 95`)
+   forces the condition without touching the disk itself.
+
+6. **Extracted `Get-ToolkitConfig` into `powershell/modules/Config.psm1`**,
+   removing the config-loading block `Get-PasswordExpiryReport.ps1` had
+   inline. This is the second script needing the identical
+   local-then-example-then-hardcoded-default fallback chain -- the
+   right time to share it, not before (one script needing something
+   isn't duplication yet) and not never (a third copy-paste would have
+   been).
+
+**Status:** Built and lab-tested, 2026-09-28. Found a real bug during
+testing -- see the entry below.
+
+---
+
+## 2026-09-28 -- Bug: cooldown silently ignored due to a DateTime Kind mismatch
+
+**Context:** Testing the cooldown against the lab: forced an alert with
+`-WarningThresholdPercent 95`, confirmed the state file wrote a real UTC
+timestamp (`"2026-09-28T21:30:32.7484958Z"`), then re-ran the identical
+command ~11 minutes later expecting suppression (cooldown = 60 min). It
+alerted again.
+
+**Root cause:**
+
+```
+$LastAlert = [DateTime]$State[$VolumeLetter].lastAlertUtc
+```
+
+A plain `[DateTime]` cast on a `Z`-suffixed ISO 8601 string does not
+preserve it as UTC. .NET's default parser converts it to the equivalent
+LOCAL time and returns a value labeled `Kind = Local` -- silently, no
+error. On DC01 (UTC-7), the stored `21:30:32 UTC` became a `DateTime`
+whose numeric value was `14:30:32`, still marked local. Comparing that
+against `$Now.ToUniversalTime()` (`21:41:21`, correctly UTC) subtracted
+two values measured in different clocks: `21:41:21 - 14:30:32` computed
+roughly **7 hours 11 minutes** of elapsed time instead of the real
+**~11 minutes** -- comfortably past the 60-minute cooldown, so it fired
+again. Confirmed by working the actual numbers from both screenshots,
+not just inspecting the code.
+
+This is the same family of bug as the `-not $ExpiryRaw` coercion issue
+in `Get-PasswordExpiryReport.ps1` -- PowerShell/.NET doing an implicit,
+"helpful" conversion that changes the answer without raising any error
+-- but harder to catch by reading the code, since `[DateTime]$string`
+looks like it should just work.
+
+**Fix:** Stopped storing (and re-parsing) an ISO string entirely.
+State now stores Unix epoch seconds (`lastAlertUnixSeconds`, a plain
+integer via `[DateTimeOffset]::ToUnixTimeSeconds()`), compared with
+plain subtraction -- there is no timezone left to misinterpret. A
+separate `lastAlertUtcDisplay` field keeps a human-readable ISO string
+in the state file for anyone glancing at it directly, but the script
+itself never reads that field back, so it can't reintroduce the bug.
+
+**Reasoning for epoch over "parse it more carefully":** the correct fix
+to the original code (`[DateTime]::Parse($string, $null,
+[DateTimeStyles]::RoundtripKind)`) would have worked, but it relies on
+every future reader of this file remembering that exact incantation.
+Removing the string-parsing step removes the whole bug class rather
+than patching one instance of it -- the same reasoning `New-BulkUsersFromCsv.ps1`
+used for CSPRNG passwords over `Get-Random`: prefer a fix that makes
+the mistake structurally unavailable over one that just corrects this
+particular occurrence of it.
+
+**Status:** Fixed and verified against the lab, 2026-09-28 14:51 --
+forced alert fired and saved state correctly; a second run ~4 minutes
+later correctly computed "4.1 of 60 min elapsed" and suppressed (0
+alerts fired), confirming both the epoch-based math and the log message
+itself are accurate, not just silent.
+
+
+## 2026-09-29 -- Shared logging convention (Bash): TOOLKIT01 built, lib/logging.sh written
+
+**Context:** First Bash work in the toolkit. Before any script logic,
+needed (1) a real Linux target to test against and (2) the shared
+logging piece the PowerShell side already has.
+
+**Environment:** `TOOLKIT01` -- Ubuntu 26.04.1 LTS (arm64), VMware
+Fusion, IP `192.168.45.130` (VMware's own NAT network -- separate from
+UTM's `192.168.64.x` used by `homelab-ad-ds`; these are two unrelated
+hypervisors on the same Mac). SSH confirmed reachable from the Mac's own
+Terminal, password auth. Not domain-joined -- deliberately out of scope
+for this toolkit; see the earlier decision to keep this separate from
+the still-unbuilt hybrid-identity LNX01 project.
+
+**Decision:** `bash/lib/write_log()` matches `Logging.psm1`'s
+`Write-Log` shape exactly -- timestamped, leveled (INFO/WARN/ERROR),
+console (color-coded) + append-only file -- so logs from both halves of
+the toolkit read the same way despite being different languages.
+
+**Two Bash-specific gotchas worth recording, since they're easy to get
+wrong silently:**
+- Bash function variables are global by default unless declared
+  `local` -- the opposite of PowerShell, where a function's variables
+  are already scoped to it. Every variable in `write_log` is explicitly
+  `local` for this reason.
+- Positional parameters (`$1 $2 $3`), not named ones -- Bash has no
+  built-in equivalent to PowerShell's `-Level`/`-Message`/`-LogPath`
+  parameter binding, so call-site order matters and isn't
+  self-documenting the way the PowerShell side is. Documented directly
+  in the file's usage comment to compensate.
+
+**Status:** Accepted.

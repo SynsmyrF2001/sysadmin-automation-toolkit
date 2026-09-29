@@ -22,9 +22,9 @@ tested.
 
 | Script | Purpose | Status |
 |---|---|---|
-| `New-BulkUsersFromCsv.ps1` | Create user accounts in bulk from a CSV | Built -- awaiting lab validation |
+| `New-BulkUsersFromCsv.ps1` | Create user accounts in bulk from a CSV | Verified against lab |
 | `Get-PasswordExpiryReport.ps1` | Flag accounts nearing password expiry | Verified against lab |
-| `Test-DiskSpaceAlert.ps1` | Monitor volumes, alert on low free space | Scaffold |
+| `Test-DiskSpaceAlert.ps1` | Monitor volumes, alert on low free space | Verified against lab |
 
 ### Bash (Linux)
 
@@ -115,6 +115,57 @@ git remote add origin <your-repo-url>
 git push -u origin main
 ```
 
-## Status
+## Milestones Completed
 
-Actively being built. See `docs/ROADMAP.md` for what is next.
+- [x] Repo scaffolded: directory structure, `docs/` (DECISIONS.md,
+      ROADMAP.md), `CHANGELOG.md`, `.gitignore`
+- [x] Shared PowerShell logging module built (`Logging.psm1`) --
+      timestamped, leveled, console + append-only file
+- [x] `Get-PasswordExpiryReport.ps1` built and validated against the
+      real lab (`corp.local`, 13-15 accounts depending on run); uses
+      `msDS-UserPasswordExpiryTimeComputed` to correctly account for
+      Fine-Grained Password Policies; reports `MustChangeAtLogon`
+      (`pwdLastSet = 0`) as a distinct category rather than hiding or
+      misrepresenting it
+- [x] `New-BulkUsersFromCsv.ps1` built and fully validated against the
+      lab: `-WhatIf` accuracy confirmed, clean creation confirmed,
+      idempotency confirmed on a second identical run, cross-validated
+      against `Get-PasswordExpiryReport.ps1` (6 -> 8 flagged accounts,
+      exactly as predicted)
+- [x] `Test-DiskSpaceAlert.ps1` built and verified against the lab:
+      per-volume cooldown state (`state/disk-space-alert-state.json`),
+      threshold check overridable for testing without filling a disk,
+      no distribution channel wired up yet (console + log only, by
+      design).
+- [x] Shared config-loading module extracted (`Config.psm1`) once a
+      second script needed the same local-vs-example fallback logic
+- [x] Cryptographically secure temporary-password generation
+      implemented (`RandomNumberGenerator`, not `Get-Random`) for new
+      account creation, with forced change-at-next-logon
+- [x] Cross-linked to `homelab-ad-ds`; repo-separation and
+      documentation-consistency decisions made and logged
+- [x] Three real bugs found through empirical testing against the lab --
+      none caught by code review alone -- root-caused, fixed, and
+      verified with a second lab run each:
+  * A PowerShell array-unwrapping issue (`.Count` unreliable on a 0- or
+    1-item pipeline result)
+  * A truthy/falsy coercion bug (`-not $ExpiryRaw`) that silently
+    swallowed every `pwdLastSet = 0` account, making an entire report
+    category unreachable from the day it was written
+  * A `[DateTime]` Kind mismatch that silently reinterpreted a stored
+    UTC timestamp as local time, making the disk-alert cooldown's
+    elapsed-time math wrong by a full timezone offset -- fixed by
+    switching to Unix epoch seconds, which removes the bug class
+    rather than one instance of it
+
+## In Progress / Next Steps
+
+- [ ] Resolve blank `DisplayName` on `jsmith`/`mgarcia`/`edavis`
+      (existing lab accounts, predates this toolkit) -- diagnostic
+      query given, results pending
+- [ ] `Test-DiskSpaceAlert.ps1` -- not yet built
+- [ ] Pester tests for the filtering/computation logic -- deferred
+- [ ] `rotate-logs.sh`, `backup.sh`, and the shared `lib/logging.sh` --
+      not yet built
+
+See `docs/ROADMAP.md` for the full task-level breakdown.

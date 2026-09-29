@@ -6,6 +6,55 @@ skimmable layer -- for the reasoning behind any of these, see
 
 ---
 
+## 2026-09-29
+
+- Built `TOOLKIT01`: Ubuntu 26.04.1 LTS (arm64) in VMware Fusion,
+  SSH-reachable from the Mac. First real target for the Bash half of
+  the toolkit.
+- Built `bash/lib/logging.sh` (`write_log`), matching
+  `Logging.psm1`'s shape so logs read the same across both languages.
+
+## 2026-09-28
+
+- Found and fixed a real bug in `Test-DiskSpaceAlert.ps1`'s cooldown
+  check: a plain `[DateTime]` cast on a stored UTC timestamp silently
+  reinterpreted it as local time, making the elapsed-time math wrong by
+  a full timezone offset and causing the cooldown to be ignored.
+  Switched state storage to Unix epoch seconds, which removes the
+  timezone-parsing step -- and the whole bug class -- rather than just
+  correcting this one occurrence of it. Re-verified against the lab:
+  a forced alert fired, and a second run ~4 minutes later correctly
+  computed "4.1 of 60 min elapsed" and suppressed it.
+
+## 2026-09-25 (cont'd 2)
+
+- Built `Test-DiskSpaceAlert.ps1`: per-volume cooldown tracked in a new
+  `state/` directory, cooldown clears automatically once a volume
+  recovers above threshold (rather than just expiring on a timer), no
+  distribution channel yet (console + log only, by design, mirroring
+  the earlier email deferral on the password expiry report). Pending
+  lab validation.
+- Extracted `Get-ToolkitConfig` into a shared `Config.psm1` module and
+  updated `Get-PasswordExpiryReport.ps1` to use it, removing the
+  duplicated inline config-loading block now that a second script
+  needed the same logic.
+
+## 2026-09-25 (cont'd)
+
+- Fully verified `New-BulkUsersFromCsv.ps1` against the lab:
+  `-WhatIf` accurate, creation clean, idempotency confirmed on a second
+  run (skip, not duplicate or error). Cross-validated against
+  `Get-PasswordExpiryReport.ps1`, which correctly picked up both new
+  accounts as `MustChangeAtLogon` (6 -> 8). Also confirmed the explicit
+  `-DisplayName` fix works, visible as new accounts showing a real name
+  next to older accounts that still don't.
+- Decided to leave the `sjohnson` enabled/disabled documentation
+  mismatch (this repo's live data vs. `homelab-ad-ds`'s README) as-is --
+  known drift, doesn't block anything here, not worth reconciling for
+  its own sake.
+- Added a "Milestones Completed" checklist to `README.md`, matching
+  `homelab-ad-ds`'s convention.
+
 ## 2026-09-25
 
 - Built `New-BulkUsersFromCsv.ps1`: validates the whole CSV before
