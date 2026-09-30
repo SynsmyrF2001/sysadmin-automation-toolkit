@@ -80,6 +80,7 @@ param(
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $PSScriptRoot "modules\Logging.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "modules\Config.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "modules\PasswordExpiry.psm1") -Force
 
 $LogDir = Join-Path $PSScriptRoot "..\logs"
 if (-not (Test-Path $LogDir)) {
@@ -147,52 +148,31 @@ Write-Log -LogPath $LogPath -Level INFO -Message "Queried $($Users.Count) accoun
 # ---------------------------------------------------------------------------
 
 $Now = Get-Date
-$Cutoff = $Now.AddDays($WarningDays)
 
 $Report = [System.Collections.Generic.List[object]]::new()
 
 foreach ($User in $Users) {
 
-    if (-not $IncludeDisabled -and -not $User.Enabled) { continue }
-    if ($User.PasswordNeverExpires) { continue }
+    # All the actual categorization DECISION logic lives in
+    # Get-PasswordExpiryCategory now (modules/PasswordExpiry.psm1) --
+    # this loop's only job is pulling the AD-specific display fields
+    # (DisplayName, SamAccountName) that the pure function has no
+    # business knowing about.
+    $Category = Get-PasswordExpiryCategory `
+        -Enabled $User.Enabled `
+        -PasswordNeverExpires $User.PasswordNeverExpires `
+        -ExpiryRaw $User."msDS-UserPasswordExpiryTimeComputed" `
+        -WarningDays $WarningDays `
+        -Now $Now `
+        -IncludeDisabled:$IncludeDisabled
 
-    $ExpiryRaw = $User."msDS-UserPasswordExpiryTimeComputed"
-
-    # "Never expires" even without the flag above -- possible when a
-    # fine-grained policy sets no max age for this user. Nothing to
-    # report either way.
-    #
-    # $null explicitly, not "-not $ExpiryRaw": PowerShell treats integer
-    # 0 as boolean $false, so a truthy/falsy check here would swallow
-    # the pwdLastSet=0 case below before it's ever reached. Caught this
-    # against the lab -- see docs/DECISIONS.md, 2026-09-25.
-    if ($null -eq $ExpiryRaw -or $ExpiryRaw -eq [Int64]::MaxValue) { continue }
-
-    # pwdLastSet = 0 means "must change password at next logon." There
-    # is no countdown to compute -- the password is already invalid
-    # until changed, which is a more urgent, different kind of risk than
-    # a slow drift toward expiry. Categorize it distinctly instead of
-    # either hiding it or faking a day-count for it.
-    if ($ExpiryRaw -eq 0) {
+    if ($null -ne $Category) {
         $Report.Add([PSCustomObject]@{
             DisplayName    = $User.DisplayName
             SamAccountName = $User.SamAccountName
-            Category       = "MustChangeAtLogon"
-            ExpiryDate     = $null
-            DaysRemaining  = $null
-        })
-        continue
-    }
-
-    $ExpiryDate = [DateTime]::FromFileTime($ExpiryRaw)
-
-    if ($ExpiryDate -le $Cutoff) {
-        $Report.Add([PSCustomObject]@{
-            DisplayName    = $User.DisplayName
-            SamAccountName = $User.SamAccountName
-            Category       = "ExpiringSoon"
-            ExpiryDate     = $ExpiryDate
-            DaysRemaining  = [math]::Round(($ExpiryDate - $Now).TotalDays, 1)
+            Category       = $Category.Category
+            ExpiryDate     = $Category.ExpiryDate
+            DaysRemaining  = $Category.DaysRemaining
         })
     }
 }

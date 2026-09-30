@@ -6,22 +6,45 @@ skimmable layer -- for the reasoning behind any of these, see
 
 ---
 
-## 2026-09-29
+## 2026-09-30
 
-- Built `TOOLKIT01`: Ubuntu 26.04.1 LTS (arm64) in VMware Fusion,
-  SSH-reachable from the Mac. First real target for the Bash half of
-  the toolkit.
-- Built `bash/lib/logging.sh` (`write_log`), matching
-  `Logging.psm1`'s shape so logs read the same across both languages.
+- Fully verified the Pester suite on DC01: 11/11 passing. Took three
+  wrong turns first -- block scoping, Discovery-vs-Run phase,
+  BeforeAll placement -- each a real, well-reasoned Pester mechanism,
+  none of them the actual problem. The real cause, found via a
+  throwaway diagnostic test rather than a fourth theory: the module
+  file (PasswordExpiry.psm1) had simply never been transferred to
+  DC01. Also caught that an earlier "regression check" had likely been
+  running the old pre-refactor script the whole time, not the current
+  one -- a correct-looking result that wasn't actually confirming what
+  it appeared to confirm. Both halves of the test harness (bats,
+  Pester) are now fully run and passing, not just written.
 
-## 2026-09-29 (cont'd)
+## 2026-09-29 (cont'd 4)
 
-- Built `rotate-logs.sh`: size-based trigger, copytruncate rotation,
-  gzip compression, retention pruning, `--dry-run` support. First
-  script tested by direct execution before ever reaching a real
-  machine -- caught and fixed two real bugs this way: empty files being
-  rotated forever under a low threshold, and retention pruning silently
-  never running on days without a fresh rotation.
+- Started the test harness, deferred since 2026-09-25. Bash: installed
+  bats and wrote 13 tests across rotate-logs.bats (7) and backup.bats
+  (6), all run and passing -- including permanent regression tests for
+  both bugs found earlier today. PowerShell: extracted the pure
+  categorization logic from Get-PasswordExpiryReport.ps1 into
+  modules/PasswordExpiry.psm1 (no AD dependency), and wrote Pester
+  tests against it, including a direct regression test for the
+  pwdLastSet=0 coercion bug from 2026-09-25. The Pester suite is
+  written but not executable in this environment (no PowerShell
+  runtime) -- needs a real run on DC01 to confirm, unlike the Bash
+  suite, which is fully verified already.
+
+## 2026-09-29 (cont'd 3)
+
+- `backup.sh` verified for real against TOOLKIT01: creation,
+  verification (4 entries, matching the sandbox result exactly), and
+  dry-run all clean. Also re-confirmed `rotate-logs.sh` still works
+  correctly after the `lib/config.sh` refactor, on the real VM this
+  time, not just in the sandbox.
+- **All 5 scripts from the original project card are now built and
+  fully verified against real environments** -- AD user creation,
+  password expiry reporting, disk space alert, log rotation, backup.
+  This closes the literal scope of the original project.
 
 ## 2026-09-29 (cont'd 2)
 
@@ -37,6 +60,23 @@ skimmable layer -- for the reasoning behind any of these, see
 - **All 5 scripts from the original project card now exist**: AD user
   creation, password expiry reporting, disk space alert, log rotation,
   and backup.
+
+## 2026-09-29 (cont'd)
+
+- Built `rotate-logs.sh`: size-based trigger, copytruncate rotation,
+  gzip compression, retention pruning, `--dry-run` support. First
+  script tested by direct execution before ever reaching a real
+  machine -- caught and fixed two real bugs this way: empty files being
+  rotated forever under a low threshold, and retention pruning silently
+  never running on days without a fresh rotation.
+
+## 2026-09-29
+
+- Built `TOOLKIT01`: Ubuntu 26.04.1 LTS (arm64) in VMware Fusion,
+  SSH-reachable from the Mac. First real target for the Bash half of
+  the toolkit.
+- Built `bash/lib/logging.sh` (`write_log`), matching
+  `Logging.psm1`'s shape so logs read the same across both languages.
 
 ## 2026-09-28
 

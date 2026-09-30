@@ -12,3 +12,7 @@ repo.
   it. See docs/DECISIONS.md (2026-09-25, "Test-DiskSpaceAlert.ps1:
   state, cooldown, and shared config") for why it was extracted then and
   not sooner.
+- `PasswordExpiry.psm1` -- `Get-PasswordExpiryCategory`: the pure
+  categorization logic extracted from `Get-PasswordExpiryReport.ps1`
+  specifically so it could be unit tested without live AD access. See
+  `powershell/tests/Get-PasswordExpiryCategory.Tests.ps1`.

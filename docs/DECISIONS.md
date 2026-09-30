@@ -573,16 +573,202 @@ to confirm nothing broke (it didn't).
   correctly propagates through the `| wc -l` pipeline rather than
   hiding it behind `wc`'s own successful exit.
 
-**Status:** Built and fully verified against a local test harness --
-creation, verification, corruption detection, retention pruning, and
-dry-run all tested clean, no bugs found. This is the first script in
-either language that worked correctly on the first implementation,
-plausibly because `rotate-logs.sh`'s "run maintenance unconditionally,
-not behind an early exit" lesson got designed in from the start here
-rather than discovered after the fact. Pending a first real run against
-TOOLKIT01.
+**Status:** Fully verified, sandbox AND real (TOOLKIT01, 2026-09-29
+05:00) -- creation, verification (4 entries, matching the sandbox
+result exactly), corruption detection, retention pruning, and dry-run
+all clean on both. No bugs found on either pass -- the first script in
+either language to work correctly the first time, plausibly because
+`rotate-logs.sh`'s "run maintenance unconditionally, not behind an
+early exit" lesson got designed in from the start here rather than
+discovered after the fact. `rotate-logs.sh` also regression-checked
+again post-refactor on the real VM -- no breakage.
 
-**Milestone:** all 5 scripts from the original project card now exist:
-AD user creation, password expiry reporting, disk space alert, log
-rotation, and backup -- the first four fully verified against real
-environments, this one verified locally and awaiting the same.
+**Milestone: all 5 scripts from the original project card are now built
+and fully verified against real environments.** AD user creation,
+password expiry reporting, disk space alert, log rotation, and backup.
+This closes the literal scope of the original project card. Remaining
+open items (test harness, CI, confirming the GitHub push) are past that
+original scope, not blockers to it.
+
+
+## 2026-09-29 -- Test harness started: bats (fully verified) + Pester (written, unverified)
+
+**Context:** "Pester tests for the filtering/computation logic" had
+been deferred multiple times since 2026-09-25. Also the first time this
+repo gets bats tests for the Bash scripts at all.
+
+**Bash / bats:** Installed bats directly in the environment these files
+get built in (`apt-get install -y bats`) and actually ran every test
+before shipping any of them -- same standard as the scripts themselves.
+Wrote `bash/tests/rotate-logs.bats` (7 tests) and `bash/tests/backup.bats`
+(6 tests), all passing. Two of the rotate-logs tests are explicit
+regression tests for the two real bugs found and fixed earlier today
+(empty-file re-rotation, pruning skipped by early exits) -- they encode
+the exact scenarios that were tested manually, so neither bug can
+silently come back if this file gets touched again. The backup.sh
+"destination can't be created" test deliberately uses a file-where-a-
+directory-should-be rather than `chmod`, because bats commonly runs as
+root, and root ignores permission bits -- a chmod-based test would have
+passed for the wrong reason (or not caught the failure at all).
+
+**PowerShell / Pester -- a real limitation worth being honest about:**
+there is no PowerShell runtime available in the environment these files
+get built in, so unlike every Bash test, these could not be executed or
+confirmed before being handed over. They're written as carefully as the
+Bash suite, but "written carefully" and "verified" are different claims,
+and only the second one is fully true for the Bash half today.
+
+**Decision:** Extracted the categorization logic from
+`Get-PasswordExpiryReport.ps1`'s AD-query loop into a pure function,
+`Get-PasswordExpiryCategory` (`modules/PasswordExpiry.psm1`) -- no
+`Get-ADUser` anywhere near it, primitive values in, a category out.
+The original inline version was only exercisable against a real domain
+controller; the extracted version takes synthetic inputs, which is what
+actually makes unit testing possible at all. `Get-PasswordExpiryReport.ps1`
+now calls this function per user instead of embedding the logic, and
+keeps only the AD-specific display fields (DisplayName, SamAccountName)
+in its own loop.
+
+`powershell/tests/Get-PasswordExpiryCategory.Tests.ps1` (Pester 5+
+syntax) tests the extracted function directly. The first test in the
+"MustChangeAtLogon" context is written specifically as the regression
+test for the `-not $ExpiryRaw` coercion bug (2026-09-25) -- it asserts
+that `ExpiryRaw = 0` categorizes as `MustChangeAtLogon`, not excluded,
+which is exactly the behavior that bug broke.
+
+**Status:** bats: built, run, passing -- done. Pester: written,
+structurally checked (brace/paren balance only, since there's no
+runtime to actually execute it here), needs a real run on DC01 to
+confirm. `New-BulkUsersFromCsv.ps1` and `Test-DiskSpaceAlert.ps1` don't
+have Pester tests yet -- their logic is more entangled with mutating AD
+calls and `Get-Volume`, which would need `Mock` to exercise safely.
+Natural next step, not started.
+
+
+## 2026-09-29 -- Pester suite failed on first real run: Discovery vs. Run phase
+
+**Context:** First real run of `Get-PasswordExpiryCategory.Tests.ps1`
+on DC01 (Pester 6.2.0). All 11 tests failed with the identical error:
+`CommandNotFoundException: The term 'Get-PasswordExpiryCategory' is not
+recognized`. The regression check on the refactored
+`Get-PasswordExpiryReport.ps1` passed cleanly in the same session,
+confirming the module itself was fine -- this was specific to the test
+file.
+
+**First hypothesis (wrong): block scoping.** The `Import-Module` call
+sat inside a top-level `BeforeAll {}`, outside any `Describe`. Guessed
+that PowerShell's normal function-scoping rules meant the import wasn't
+propagating to where `It` blocks execute, and that `-Global` would fix
+it by forcing the import into global scope.
+
+**Result: no change at all.** Identical failures, identical line
+numbers, identical error text, after adding `-Global`. That non-result
+is itself the useful signal -- if scope-within-a-phase had been the
+real problem, `-Global` should have changed something. Getting zero
+change means the fix targeted the wrong axis entirely.
+
+**Second hypothesis (matches the evidence): Discovery vs. Run phase.**
+Pester 5+ (including 6.2.0, confirmed installed here) splits execution
+into two genuinely separate passes: Discovery (walks the file to find
+`Describe`/`Context`/`It` blocks) and Run (actually executes them). A
+`BeforeAll` sitting outside any `Describe` runs during Discovery -- a
+different session state from Run, not just a narrower scope within the
+same one. `-Global` scope inside Discovery's session state doesn't
+cross into Run's, because they're not nested scopes, they're separate
+passes. The other `BeforeAll` (setting `$Now`) was already correctly
+nested inside `Describe` the whole time, which is exactly why `$Now`
+was never the thing erroring.
+
+**Fix:** moved `Import-Module` into the same `BeforeAll` that already
+sets `$Now`, inside `Describe`. No `-Global` needed once it's in the
+right phase -- Run-phase `BeforeAll` variables and functions are
+already visible to every `It`/`Context` nested in the same `Describe`
+without it.
+
+**Status:** This fix ALSO failed -- identical error, second time.
+See the follow-up entry immediately below.
+
+---
+
+## 2026-09-29 -- Pester suite, attempt 3: BeforeAll itself was the problem
+
+**Context:** Moving `Import-Module` into `Describe`'s own `BeforeAll`
+(the fix above) did not resolve it either -- same identical
+`CommandNotFoundException` on `Get-PasswordExpiryCategory`, both times.
+Two attempts, two non-fixes, both involving `Import-Module` wrapped in
+a `BeforeAll` -- first outside `Describe`, then inside it.
+
+**That repetition is itself the signal.** The variable holding the
+common factor between two different failures usually is where the bug
+actually is. Both attempts moved *where* the `BeforeAll` sat; neither
+questioned whether `BeforeAll` was the right tool at all.
+
+**Third hypothesis: `BeforeAll` is for state, not for making commands
+available.** Pester's own documented purpose for `BeforeAll` is
+per-run state setup (fresh variables, fresh test data) -- not
+introducing new commands into scope. `Describe` blocks are scriptblocks
+that capture their surrounding LEXICAL scope at the moment Pester
+parses the file, not at the moment `BeforeAll` later executes. A bare
+top-level `Import-Module`, sitting as plain script code with no
+wrapping block at all, is part of that surrounding lexical scope. One
+wrapped in `BeforeAll` -- any `BeforeAll`, anywhere -- isn't, because
+`BeforeAll`'s body is deferred execution, not part of the file's
+parse-time scope.
+
+**Fix:** removed the `BeforeAll` wrapper around `Import-Module`
+entirely. It's now bare top-level code, immediately before `Describe`.
+The `BeforeAll` that sets `$Now` stays exactly where it was (inside
+`Describe`) -- that one genuinely is per-run state, which is what
+`BeforeAll` is for.
+
+**Status:** This ALSO failed -- identical error, third time. The
+follow-up diagnostic below finally found the real cause.
+
+---
+
+## 2026-09-30 -- Pester suite, the actual root cause: the file was never there
+
+**Context:** Three attempts, three different theories about Pester's
+scoping and execution-phase model, three identical failures. Rather
+than a fourth theory, added a throwaway diagnostic test file with
+direct `Write-Host` checks: does `$PSScriptRoot` resolve to a real
+path, does `Test-Path` on the module file return true, is the function
+found via `Get-Command` at three separate checkpoints (top level,
+inside `BeforeAll`, inside `It`).
+
+**The actual answer:** `Test-Path` on the module returned `False`.
+`Get-ChildItem` on the modules folder directly confirmed it:
+`PasswordExpiry.psm1` had never actually been transferred to DC01 at
+all. Only `Config.psm1` and `Logging.psm1` were present. Every theory
+about Discovery-vs-Run phases, `BeforeAll` scoping, and lexical capture
+was reasoning carefully about a mechanism that was never the actual
+problem -- the file the mechanism was supposed to load didn't exist,
+so no amount of correct reasoning about scope or phase could have
+fixed it.
+
+**A loose thread this also resolves:** the regression check on
+`Get-PasswordExpiryReport.ps1`, run earlier the same session, showed a
+correct working report -- which had been read as confirmation the
+refactor was safely on DC01. In hindsight that almost certainly ran the
+OLD, pre-refactor script, which never depended on
+`PasswordExpiry.psm1` in the first place. "It produced correct output"
+and "it's running the current code" are different claims; only the
+first one was actually verified at the time.
+
+**Fix:** transferred the missing file. Confirmed via `Get-ChildItem`
+that it now exists, and via `Select-String` that
+`Get-PasswordExpiryReport.ps1` genuinely references
+`PasswordExpiry.psm1` (confirming that file was current too, not
+another stale copy).
+
+**Status:** Fully verified. `Invoke-Pester` on the real suite: 11
+passed, 0 failed. The Pester half of the test harness is now on equal
+footing with the Bash half -- both fully run and passing, not just
+written.
+
+**The lesson worth keeping, independent of the three wrong turns:**
+when several plausible-sounding fixes in a row produce byte-for-byte
+identical failures, that repetition is itself strong evidence the
+theory is wrong, not that the fix needs refining further. The moment to
+check the most basic possible fact (does the file exist at all) is
+before the first sophisticated theory, not after the third.

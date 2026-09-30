@@ -30,8 +30,8 @@ tested.
 
 | Script | Purpose | Status |
 |---|---|---|
-| `rotate-logs.sh` | Rotate, compress, and prune application logs | Scaffold |
-| `backup.sh` | Back up configured paths/databases, verify, prune | Scaffold |
+| `rotate-logs.sh` | Rotate, compress, and prune application logs | Verified on TOOLKIT01 |
+| `backup.sh` | Back up configured paths/databases, verify, prune | Verified on TOOLKIT01 |
 
 ## Design principles
 
@@ -145,7 +145,8 @@ git push -u origin main
 - [x] Shared Bash logging module built (`bash/lib/logging.sh`,
       `write_log`), matching `Logging.psm1`'s shape so logs read the
       same across both languages
-- [x] `rotate-logs.sh` built and locally verified: copytruncate
+- [x] `rotate-logs.sh` built and fully verified, sandbox AND real
+      (TOOLKIT01): copytruncate
       rotation (not rename, so a process with the file already open
       keeps writing correctly), gzip compression, retention pruning,
       `--dry-run`. Two real bugs caught by directly executing the
@@ -156,15 +157,26 @@ git push -u origin main
       extracted once `backup.sh` needed the same logic
       `rotate-logs.sh` already had inline; `rotate-logs.sh` refactored
       and regression-tested afterward
-- [x] `backup.sh` built and fully verified locally: tar+gzip with
-      relative paths (not absolute, so restores don't fight you),
-      verification via an independent read-back rather than trusting
-      the write's exit code, retention pruning, `--dry-run`. No bugs
-      found -- the first script in either language to work correctly
-      on the first implementation
-- [x] **All 5 scripts from the original project card now exist**: AD
-      user creation, password expiry reporting, disk space alert, log
-      rotation, and backup
+- [x] `backup.sh` built and fully verified, sandbox AND real
+      (TOOLKIT01): tar+gzip with relative paths (not absolute, so
+      restores don't fight you), verification via an independent
+      read-back rather than trusting the write's exit code, retention
+      pruning, `--dry-run`. No bugs found on either pass -- the first
+      script in either language to work correctly the first time
+- [x] **All 5 scripts from the original project card are now built and
+      fully verified against real environments**: AD user creation,
+      password expiry reporting, disk space alert, log rotation, and
+      backup. This closes the literal scope of the original project.
+- [x] Test harness fully verified: **13 bats tests + 11 Pester tests,
+      all passing** (`rotate-logs.bats`, `backup.bats`,
+      `Get-PasswordExpiryCategory.Tests.ps1`). Extracted
+      `Get-PasswordExpiryReport.ps1`'s categorization logic into a
+      pure, testable function (`modules/PasswordExpiry.psm1`). The
+      Pester run took three wrong turns first (Pester scoping/phase
+      theories) before the real cause -- a module file that had simply
+      never been transferred -- surfaced via a throwaway diagnostic
+      test rather than a fourth guess. Both halves of the harness are
+      now on equal footing: fully run and passing, not just written.
 - [x] Shared config-loading module extracted (`Config.psm1`) once a
       second script needed the same local-vs-example fallback logic
 - [x] Cryptographically secure temporary-password generation
@@ -191,8 +203,9 @@ git push -u origin main
 - [ ] Resolve blank `DisplayName` on `jsmith`/`mgarcia`/`edavis`
       (existing lab accounts, predates this toolkit) -- diagnostic
       query given, results pending
-- [ ] Pester tests (PowerShell) and bats tests (Bash) -- deferred a few
-      times now, next on the list
+- [ ] Pester tests for `New-BulkUsersFromCsv.ps1` and
+      `Test-DiskSpaceAlert.ps1` -- needs `Mock` for AD/`Get-Volume`
+      calls, not started
 - [ ] CI (GitHub Actions) running tests on push -- once there are tests
       to run
 
